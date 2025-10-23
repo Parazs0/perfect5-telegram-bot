@@ -2,7 +2,11 @@ import os
 import time
 import pandas as pd
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
+import threading
+import http.server
+import socketserver
 
 # ✅ Load environment variables
 load_dotenv()
@@ -11,55 +15,73 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CSV_PATH = os.getenv("CSV_PATH", "ALL_WATCHLIST_SYMBOLS.csv")
 
-# ✅ Telegram helper
-def send_telegram_message(message):
+# ✅ Telegram alert function
+def send_telegram_alert(message: str):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
-        requests.post(url, data=data)
+        requests.post(url, data=payload)
+        print(f"📩 Sent alert: {message}")
     except Exception as e:
-        print(f"⚠️ Telegram Error: {e}")
+        print(f"❌ Telegram error: {e}")
 
-# ✅ Load symbols
+# ✅ Load watchlist from CSV
 def load_symbols():
     if not os.path.exists(CSV_PATH):
         print(f"❌ CSV not found: {CSV_PATH}")
         return []
     df = pd.read_csv(CSV_PATH)
-    return df["SYMBOL"].dropna().tolist()
+    symbols = df.iloc[:, 0].dropna().tolist()
+    print(f"📈 Loaded {len(symbols)} symbols from CSV")
+    return symbols
 
-# ✅ Mock signal generator (replace with actual logic)
-def check_signal(symbol):
-    """
-    यहां आप अपने TradingView indicator signal fetching logic लगा सकते हैं।
-    अभी यह सिर्फ mock random signal generate करता है।
-    """
+# ✅ Dummy function to simulate TradingView indicator check
+# (In actual setup, this would fetch indicator values via API or scraping)
+def check_indicator_signal(symbol):
+    # For demo purpose, generate random fake buy/sell every few minutes
     import random
-    # Example: 1% chance to trigger a signal
-    return random.random() < 0.01
+    sig = random.choice(["BUY", "SELL", "WAIT", "WAIT", "WAIT"])
+    return sig
 
-# ✅ Main Bot loop
-def main():
-    print("🤖 Perfect5 Auto Signal Bot Started — Render Mode 🌐")
+# ✅ Main loop: check all symbols, send alerts only for new signals
+def monitor_signals():
     symbols = load_symbols()
     if not symbols:
-        print("⚠️ No symbols found in CSV.")
         return
 
-    print(f"📈 Loaded {len(symbols)} symbols from {CSV_PATH}")
-    sent_signals = set()
+    last_signals = {}  # store last signal per symbol
 
     while True:
         for sym in symbols:
-            if check_signal(sym) and sym not in sent_signals:
-                msg = f"📊 <b>New Signal Alert</b>\nSymbol: <code>{sym}</code>"
-                send_telegram_message(msg)
-                print(f"✅ Alert Sent: {sym}")
-                sent_signals.add(sym)
-            time.sleep(1)  # to prevent spam on API
+            try:
+                signal = check_indicator_signal(sym)
 
-        print("⏳ Cycle complete — waiting 5 minutes before next check...")
-        time.sleep(300)  # check every 5 minutes
+                # only send alert if new signal detected
+                if sym not in last_signals or signal != last_signals[sym]:
+                    if signal in ["BUY", "SELL"]:
+                        msg = f"📊 <b>{sym}</b> | <b>{signal}</b> Signal\n⏰ {datetime.now().strftime('%d-%b %H:%M')}"
+                        send_telegram_alert(msg)
+                    last_signals[sym] = signal
 
+            except Exception as e:
+                print(f"⚠️ Error on {sym}: {e}")
+
+        print(f"🕒 Checking again in 2 minutes... ({datetime.now().strftime('%H:%M:%S')})")
+        time.sleep(120)
+
+# ✅ Render keep-alive (dummy web server so Render doesn’t kill the app)
+def keep_alive():
+    PORT = 10000
+    Handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        print(f"✅ Dummy server running on port {PORT} to keep Render alive...")
+        httpd.serve_forever()
+
+# ✅ Run everything
 if __name__ == "__main__":
-    main()
+    # start dummy web server in background
+    threading.Thread(target=keep_alive, daemon=True).start()
+
+    print("🚀 Perfect5 Telegram Bot started...")
+    print("🔁 Monitoring signals automatically...\n")
+    monitor_signals()
