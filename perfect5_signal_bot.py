@@ -41,6 +41,10 @@ def load_symbols():
 def check_signal(symbol):
     try:
         data = yf.download(symbol, interval="30m", period="10d", progress=False)
+        # your processing here
+    except Exception as e:
+        print(f"Error downloading {symbol}: {e}")
+    time.sleep(3)  # wait 2 seconds to avoid rate-limit
         if data.empty:
             return "WAIT"
 
