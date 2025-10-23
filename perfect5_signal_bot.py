@@ -41,10 +41,8 @@ def load_symbols():
 def check_signal(symbol):
     try:
         data = yf.download(symbol, interval="30m", period="10d", progress=False)
-        # your processing here
-    except Exception as e:
-        print(f"Error downloading {symbol}: {e}")
-    time.sleep(3)  # wait 2 seconds to avoid rate-limit
+        time.sleep(3)  # wait to avoid rate-limit
+
         if data.empty:
             return "WAIT"
 
@@ -75,7 +73,7 @@ def check_signal(symbol):
         prev_close = df["Close"].iloc[-2]
         prev_ema20 = df["EMA20"].iloc[-2]
 
-        # === BUY / SELL logic (same as Pine Script) ===
+        # === BUY / SELL logic ===
         crossover = prev_close < prev_ema20 and close > ema20
         crossunder = prev_close > prev_ema20 and close < ema20
 
