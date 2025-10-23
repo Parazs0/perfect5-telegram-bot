@@ -1,4 +1,7 @@
-selenium
-requests
 pandas
+pandas_ta
+yfinance
+requests
 python-dotenv
+numpy
+pytz
