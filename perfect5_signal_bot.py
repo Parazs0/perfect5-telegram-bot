@@ -1,94 +1,65 @@
 import os
 import time
 import pandas as pd
-from datetime import datetime
 import requests
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 
-# === Load ENV ===
+# ✅ Load environment variables
 load_dotenv()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CSV_PATH = os.getenv("CSV_PATH", "ALL_WATCHLIST_SYMBOLS.csv")
 
-# === Telegram send ===
-def send_telegram(msg: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}
+# ✅ Telegram helper
+def send_telegram_message(message):
     try:
-        requests.post(url, data=payload)
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
+        requests.post(url, data=data)
     except Exception as e:
-        print(f"⚠️ Telegram error: {e}")
+        print(f"⚠️ Telegram Error: {e}")
 
-# === Load watchlist ===
+# ✅ Load symbols
 def load_symbols():
     if not os.path.exists(CSV_PATH):
-        print("❌ CSV not found:", CSV_PATH)
+        print(f"❌ CSV not found: {CSV_PATH}")
         return []
     df = pd.read_csv(CSV_PATH)
-    symbols = df.iloc[:, 0].dropna().tolist()
-    return symbols
+    return df["SYMBOL"].dropna().tolist()
 
-# === Selenium Setup ===
-def setup_driver():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(options=options)
-    return driver
+# ✅ Mock signal generator (replace with actual logic)
+def check_signal(symbol):
+    """
+    यहां आप अपने TradingView indicator signal fetching logic लगा सकते हैं।
+    अभी यह सिर्फ mock random signal generate करता है।
+    """
+    import random
+    # Example: 1% chance to trigger a signal
+    return random.random() < 0.01
 
-# === Get indicator signal from chart ===
-def get_indicator_signal(driver, symbol):
-    url = f"https://www.tradingview.com/chart/?symbol={symbol}"
-    driver.get(url)
-    time.sleep(8)  # wait for chart + indicator to load
-
-    # Perfect5 indicator labels contain "BUY @", "SELL @" in label text
-    page_source = driver.page_source
-    if "BUY @" in page_source:
-        return "BUY"
-    elif "SELL @" in page_source:
-        return "SELL"
-    else:
-        return "WAIT"
-
-# === Main ===
+# ✅ Main Bot loop
 def main():
+    print("🤖 Perfect5 Auto Signal Bot Started — Render Mode 🌐")
     symbols = load_symbols()
     if not symbols:
+        print("⚠️ No symbols found in CSV.")
         return
 
-    print(f"📈 Loaded {len(symbols)} symbols from CSV")
-    driver = setup_driver()
-
-    print("🔑 Please login to TradingView manually once...")
-    driver.get("https://www.tradingview.com/chart/")
-    input("➡️ Login करें और जब chart + Perfect5 indicator दिखे तब Enter दबाएँ...")
-
-    last_alerts = {}
+    print(f"📈 Loaded {len(symbols)} symbols from {CSV_PATH}")
+    sent_signals = set()
 
     while True:
-        print(f"\n⏰ Checking signals... ({datetime.now().strftime('%H:%M:%S')})")
         for sym in symbols:
-            try:
-                signal = get_indicator_signal(driver, sym)
-                if sym not in last_alerts or last_alerts[sym] != signal:
-                    if signal in ["BUY", "SELL"]:
-                        msg = f"🚀 <b>{sym}</b>\n📊 Perfect5 Signal: <b>{signal}</b>\n🕒 {datetime.now().strftime('%d-%b %H:%M')}"
-                        send_telegram(msg)
-                        print(f"✅ Alert sent for {sym}: {signal}")
-                    last_alerts[sym] = signal
-                else:
-                    print(f"⏸️ {sym} — no change ({signal})")
-            except Exception as e:
-                print(f"⚠️ Error on {sym}: {e}")
+            if check_signal(sym) and sym not in sent_signals:
+                msg = f"📊 <b>New Signal Alert</b>\nSymbol: <code>{sym}</code>"
+                send_telegram_message(msg)
+                print(f"✅ Alert Sent: {sym}")
+                sent_signals.add(sym)
+            time.sleep(1)  # to prevent spam on API
 
-        print("🕐 Sleeping 5 minutes...\n")
-        time.sleep(300)
+        print("⏳ Cycle complete — waiting 5 minutes before next check...")
+        time.sleep(300)  # check every 5 minutes
 
 if __name__ == "__main__":
     main()
