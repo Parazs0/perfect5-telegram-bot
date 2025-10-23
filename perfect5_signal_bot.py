@@ -1,87 +1,96 @@
 import os
 import time
+import json
 import pandas as pd
 import requests
-from datetime import datetime
 from dotenv import load_dotenv
-import threading
-import http.server
-import socketserver
 
-# ✅ Load environment variables
+# ✅ Load environment variables from .env
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-CSV_PATH = os.getenv("CSV_PATH", "ALL_WATCHLIST_SYMBOLS.csv")
+CSV_PATH = os.getenv("CSV_PATH")  # Example: /opt/render/project/src/ALL_WATCHLIST_SYMBOLS.csv
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))  # seconds
 
-# ✅ Telegram alert function
-def send_telegram_alert(message: str):
+SENT_ALERTS_FILE = "sent_alerts.json"  # store already-sent alerts
+
+
+# ✅ Telegram message sender
+def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        requests.post(url, data=payload)
-        print(f"📩 Sent alert: {message}")
+        requests.post(url, json=payload)
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
+        print(f"⚠️ Telegram error: {e}")
 
-# ✅ Load watchlist from CSV
-def load_symbols():
+
+# ✅ Load previous sent alerts from JSON file
+def load_sent_alerts():
+    if os.path.exists(SENT_ALERTS_FILE):
+        with open(SENT_ALERTS_FILE, "r") as f:
+            try:
+                return set(json.load(f))
+            except json.JSONDecodeError:
+                return set()
+    return set()
+
+
+# ✅ Save new sent alerts to JSON file
+def save_sent_alerts(alerts):
+    with open(SENT_ALERTS_FILE, "w") as f:
+        json.dump(list(alerts), f)
+
+
+# ✅ Read CSV and generate alerts
+def check_signals(sent_alerts):
     if not os.path.exists(CSV_PATH):
         print(f"❌ CSV not found: {CSV_PATH}")
-        return []
-    df = pd.read_csv(CSV_PATH)
-    symbols = df.iloc[:, 0].dropna().tolist()
-    print(f"📈 Loaded {len(symbols)} symbols from CSV")
-    return symbols
+        return sent_alerts
 
-# ✅ Dummy function to simulate TradingView indicator check
-# (In actual setup, this would fetch indicator values via API or scraping)
-def check_indicator_signal(symbol):
-    # For demo purpose, generate random fake buy/sell every few minutes
-    import random
-    sig = random.choice(["BUY", "SELL", "WAIT", "WAIT", "WAIT"])
-    return sig
+    try:
+        df = pd.read_csv(CSV_PATH)
+    except Exception as e:
+        print(f"⚠️ CSV read error: {e}")
+        return sent_alerts
 
-# ✅ Main loop: check all symbols, send alerts only for new signals
-def monitor_signals():
-    symbols = load_symbols()
-    if not symbols:
-        return
+    required_cols = {"Symbol", "Signal", "Time"}
+    if not required_cols.issubset(df.columns):
+        print(f"⚠️ CSV missing columns: {required_cols}")
+        return sent_alerts
 
-    last_signals = {}  # store last signal per symbol
+    for _, row in df.iterrows():
+        symbol = row["Symbol"]
+        signal = row["Signal"]
+        time_ = str(row.get("Time", ""))
+
+        # Unique ID for each alert (Symbol + Signal + Time)
+        alert_id = f"{symbol}_{signal}_{time_}"
+
+        if alert_id not in sent_alerts:
+            # New alert found 🚨
+            message = f"📊 <b>{symbol}</b>\nSignal: <b>{signal}</b>\nTime: {time_}"
+            send_telegram_message(message)
+            print(f"✅ Sent new alert: {alert_id}")
+            sent_alerts.add(alert_id)
+
+    save_sent_alerts(sent_alerts)
+    return sent_alerts
+
+
+# ✅ Main Loop
+def main():
+    print("🤖 Perfect5 Auto Signal Bot Started (Render Mode)")
+    print(f"📂 Using CSV: {CSV_PATH}")
+    print("📡 Monitoring for new live alerts...\n")
+
+    sent_alerts = load_sent_alerts()
 
     while True:
-        for sym in symbols:
-            try:
-                signal = check_indicator_signal(sym)
+        sent_alerts = check_signals(sent_alerts)
+        time.sleep(CHECK_INTERVAL)
 
-                # only send alert if new signal detected
-                if sym not in last_signals or signal != last_signals[sym]:
-                    if signal in ["BUY", "SELL"]:
-                        msg = f"📊 <b>{sym}</b> | <b>{signal}</b> Signal\n⏰ {datetime.now().strftime('%d-%b %H:%M')}"
-                        send_telegram_alert(msg)
-                    last_signals[sym] = signal
 
-            except Exception as e:
-                print(f"⚠️ Error on {sym}: {e}")
-
-        print(f"🕒 Checking again in 2 minutes... ({datetime.now().strftime('%H:%M:%S')})")
-        time.sleep(120)
-
-# ✅ Render keep-alive (dummy web server so Render doesn’t kill the app)
-def keep_alive():
-    PORT = 10000
-    Handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        print(f"✅ Dummy server running on port {PORT} to keep Render alive...")
-        httpd.serve_forever()
-
-# ✅ Run everything
 if __name__ == "__main__":
-    # start dummy web server in background
-    threading.Thread(target=keep_alive, daemon=True).start()
-
-    print("🚀 Perfect5 Telegram Bot started...")
-    print("🔁 Monitoring signals automatically...\n")
-    monitor_signals()
+    main()
