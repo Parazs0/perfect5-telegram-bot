@@ -1,7 +1,5 @@
-pandas
-pandas_ta
-yfinance
-requests
-python-dotenv
-numpy
-pytz
+pandas==2.3.3
+requests==2.32.3
+python-dotenv==1.0.1
+ta==0.11.0
+tvdatafeed==1.0.5

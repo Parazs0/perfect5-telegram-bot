@@ -1,132 +1,151 @@
 import os
 import time
 import pandas as pd
-import pandas_ta as ta
-import yfinance as yf
-import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from tvDatafeed import TvDatafeed, Interval
+from ta.trend import EMAIndicator, ADXIndicator
+from ta.momentum import RSIIndicator
+import requests
 import threading
 import http.server
 import socketserver
 
-# ✅ Load environment variables
+# ===========================
+# 🔹 Load environment
+# ===========================
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-CSV_PATH = os.getenv("CSV_PATH", "ALL_WATCHLIST_SYMBOLS.csv")
+TV_USERNAME = os.getenv("TV_USERNAME")
+TV_PASSWORD = os.getenv("TV_PASSWORD")
 
-# ✅ Telegram alert function
-def send_telegram_alert(message: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
+# ===========================
+# 🔹 TradingView Login
+# ===========================
+try:
+    tv = TvDatafeed(username=TV_USERNAME, password=TV_PASSWORD)
+    print("✅ TradingView login successful.")
+except Exception as e:
+    print(f"⚠️ Login error: {e}")
+    tv = TvDatafeed(nologin=True)
+
+# ===========================
+# 🔹 Load CSV
+# ===========================
+CSV_PATH = r"ALL_WATCHLIST_SYMBOLS.csv"
+symbols_df = pd.read_csv(CSV_PATH)
+symbols = symbols_df["SYMBOL"].dropna().unique().tolist()
+print(f"📈 Loaded {len(symbols)} symbols from CSV")
+
+# ===========================
+# 🔹 Telegram Function
+# ===========================
+def send_telegram_message(text):
+    if not BOT_TOKEN or not CHAT_ID:
+        print("⚠️ Telegram config missing")
+        return
     try:
-        requests.post(url, data=payload)
-        print(f"📩 Sent alert: {message}")
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": text})
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
+        print(f"⚠️ Telegram error: {e}")
 
-# ✅ Load watchlist from CSV
-def load_symbols():
-    if not os.path.exists(CSV_PATH):
-        print(f"❌ CSV not found: {CSV_PATH}")
-        return []
-    df = pd.read_csv(CSV_PATH)
-    symbols = df.iloc[:, 0].dropna().tolist()
-    print(f"📈 Loaded {len(symbols)} symbols from CSV")
-    return symbols
-
-# ✅ Calculate indicators & check Perfect5 conditions
-def check_signal(symbol):
+# ===========================
+# 🔹 Signal Logic
+# ===========================
+def calculate_signals(symbol):
     try:
-        data = yf.download(symbol, interval="30m", period="10d", progress=False)
-        time.sleep(3)  # wait to avoid rate-limit
+        df = tv.get_hist(symbol=symbol, exchange=None, interval=Interval.in_30_minute, n_bars=150)
 
-        if data.empty:
-            return "WAIT"
+        if df is None or df.empty:
+            print(f"⚠️ No data for {symbol}")
+            return
 
-        df = data.copy()
-        df["EMA20"] = ta.ema(df["Close"], 20)
-        df["EMA50"] = ta.ema(df["Close"], 50)
-        df["RSI"] = ta.rsi(df["Close"], 14)
-        df["ADX"] = ta.adx(df["High"], df["Low"], df["Close"], 14)["ADX_14"]
-        df["ATR"] = ta.atr(df["High"], df["Low"], df["Close"], 14)
+        df = df.reset_index()
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df["high"] = pd.to_numeric(df["high"], errors="coerce")
+        df["low"] = pd.to_numeric(df["low"], errors="coerce")
+        df.dropna(inplace=True)
 
-        # === 5-Day High/Low ===
-        five_day_data = yf.download(symbol, interval="1d", period="7d", progress=False)
-        if not five_day_data.empty:
-            five_day_high = five_day_data["High"].tail(5).max()
-            five_day_low = five_day_data["Low"].tail(5).min()
-            five_day_range = five_day_high - five_day_low
-            level_20 = five_day_low + five_day_range * 0.20
-            level_80 = five_day_high - five_day_range * 0.20
-        else:
-            level_20, level_80 = None, None
+        if len(df) < 50:
+            return
 
-        close = df["Close"].iloc[-1]
-        ema20 = df["EMA20"].iloc[-1]
-        ema50 = df["EMA50"].iloc[-1]
-        adx = df["ADX"].iloc[-1]
-        rsi = df["RSI"].iloc[-1]
+        # Indicators
+        ema20 = EMAIndicator(df["close"], window=20).ema_indicator()
+        adx_val = ADXIndicator(df["high"], df["low"], df["close"], window=14).adx()
+        rsi_val = RSIIndicator(df["close"], window=14).rsi()
 
-        prev_close = df["Close"].iloc[-2]
-        prev_ema20 = df["EMA20"].iloc[-2]
+        level_20 = float(df["close"].quantile(0.2))
+        level_80 = float(df["close"].quantile(0.8))
+        adx_threshold = 25
 
-        # === BUY / SELL logic ===
-        crossover = prev_close < prev_ema20 and close > ema20
-        crossunder = prev_close > prev_ema20 and close < ema20
+        close_now = df["close"].iloc[-1]
+        ema_now = ema20.iloc[-1]
+        adx_now = adx_val.iloc[-1]
+        rsi_now = rsi_val.iloc[-1]
 
+        # All 4 condition check together
         buy_condition = (
-            crossover and adx > 25 and rsi > 50 and (level_20 is not None and close > level_20)
+            close_now > ema_now
+            and adx_now > adx_threshold
+            and rsi_now > 50
+            and close_now > level_20
         )
 
         sell_condition = (
-            crossunder and adx > 25 and rsi < 50 and (level_80 is not None and close < level_80)
+            close_now < ema_now
+            and adx_now > adx_threshold
+            and rsi_now < 50
+            and close_now < level_80
         )
 
+        # Alert only when all four are true (and only once)
+        signal_file = "signal_log.txt"
+        last_signal = ""
+        if os.path.exists(signal_file):
+            with open(signal_file, "r") as f:
+                last_signal = f.read().strip()
+
+        new_signal = ""
+
         if buy_condition:
-            return "BUY"
+            new_signal = f"🟢 BUY SIGNAL — {symbol}\n💰 {round(close_now,2)} | RSI {round(rsi_now,1)} | ADX {round(adx_now,1)}"
         elif sell_condition:
-            return "SELL"
+            new_signal = f"🔴 SELL SIGNAL — {symbol}\n💰 {round(close_now,2)} | RSI {round(rsi_now,1)} | ADX {round(adx_now,1)}"
+
+        if new_signal and new_signal != last_signal:
+            print(new_signal)
+            send_telegram_message(new_signal)
+            with open(signal_file, "w") as f:
+                f.write(new_signal)
         else:
-            return "WAIT"
+            print(f"✅ {symbol} — No signal")
 
     except Exception as e:
-        print(f"⚠️ Error fetching {symbol}: {e}")
-        return "WAIT"
+        print(f"⚠️ Error in {symbol}: {e}")
 
-# ✅ Main monitoring loop
-def monitor_signals():
-    symbols = load_symbols()
-    if not symbols:
-        return
-
-    last_signals = {}
-
-    while True:
-        for sym in symbols:
-            signal = check_signal(sym)
-
-            if sym not in last_signals or signal != last_signals[sym]:
-                if signal in ["BUY", "SELL"]:
-                    msg = f"📊 <b>{sym}</b> | <b>{signal}</b> Signal\n⏰ {datetime.now().strftime('%d-%b %H:%M')}"
-                    send_telegram_alert(msg)
-                last_signals[sym] = signal
-
-        print(f"🕒 Checking again in 5 minutes... ({datetime.now().strftime('%H:%M:%S')})")
-        time.sleep(300)  # every 5 minutes
-
-# ✅ Keep-alive server for Render
+# ===========================
+# 🔹 Keep Alive (for Render)
+# ===========================
 def keep_alive():
     PORT = 10000
-    Handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        print(f"✅ Dummy server running on port {PORT} to keep Render alive...")
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), handler) as httpd:
+        print(f"✅ Keep-alive server running on port {PORT}")
         httpd.serve_forever()
 
-# ✅ Start the bot
-if __name__ == "__main__":
-    threading.Thread(target=keep_alive, daemon=True).start()
-    print("🚀 Perfect5 Telegram Bot started...")
-    monitor_signals()
+threading.Thread(target=keep_alive, daemon=True).start()
+
+# ===========================
+# 🔹 Main Loop
+# ===========================
+print(f"\n🔁 Monitoring {len(symbols)} symbols automatically...\n")
+
+while True:
+    print(f"\n🕒 Scanning at {datetime.now().strftime('%H:%M:%S')}\n")
+    for symbol in symbols:
+        calculate_signals(symbol)
+        time.sleep(5)
+    print("\n🔄 Full scan complete — waiting 2 minutes...\n")
+    time.sleep(120)
