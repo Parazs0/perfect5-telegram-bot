@@ -2,5 +2,5 @@ pandas==2.3.3
 requests==2.32.3
 python-dotenv==1.0.1
 ta==0.11.0
-# ✅ tvDatafeed GitHub से zip द्वारा install होगा (no login needed)
-https://github.com/StreamAlpha/tvdatafeed/archive/refs/heads/main.zip
+# ✅ tvdatafeed install from master branch (no login, 100% Render compatible)
+https://github.com/StreamAlpha/tvdatafeed/archive/refs/heads/master.zip
