@@ -1,7 +1,7 @@
 import os
 import time
 import pandas as pd
-from datetime import datetime, time as dtime
+from datetime import datetime
 from dotenv import load_dotenv
 from tvDatafeed import TvDatafeed, Interval
 from ta.trend import EMAIndicator, ADXIndicator
@@ -10,7 +10,6 @@ import requests
 import threading
 import http.server
 import socketserver
-import pytz
 
 # ===========================
 # 🔹 Load environment
@@ -53,47 +52,12 @@ def send_telegram_message(text):
         print(f"⚠️ Telegram error: {e}")
 
 # ===========================
-# 🔹 Market Hours Logic
-# ===========================
-def get_market_info(symbol: str):
-    s = symbol.upper()
-    if ".NSE" in s:
-        return ("NSE", pytz.timezone("Asia/Kolkata"), dtime(9,15), dtime(15,30))
-    elif ".BSE" in s:
-        return ("BSE", pytz.timezone("Asia/Kolkata"), dtime(9,15), dtime(15,30))
-    elif ".MCX" in s:
-        return ("MCX", pytz.timezone("Asia/Kolkata"), dtime(9,0), dtime(23,59))
-    elif any(x in s for x in ["INDEX", "TVC", "CAPITALCOM", "IG", "OANDA", "SKILLING", "SPREADEX", "SZSE", "VANTAGE"]):
-        return ("GLOBAL", pytz.UTC, None, None)
-    else:
-        return ("UNKNOWN", pytz.UTC, None, None)
-
-def is_market_open(symbol: str) -> bool:
-    market, tz, start, end = get_market_info(symbol)
-    now = datetime.now(tz)
-    
-    # Monday–Sunday only
-    if now.weekday() >= 7:
-        return False
-
-    # 24x7 markets
-    if start is None and end is None:
-        return True
-
-    # Time window check
-    return start <= now.time() <= end
-
-# ===========================
 # 🔹 Signal Logic
 # ===========================
 def calculate_signals(symbol):
     try:
-        # ⏸ Skip if market is closed
-        if not is_market_open(symbol):
-            print(f"⏸ Skipping {symbol} — market closed.")
-            return
-
         df = tv.get_hist(symbol=symbol, exchange=None, interval=Interval.in_30_minute, n_bars=100)
+
         if df is None or df.empty:
             print(f"⚠️ No data for {symbol}")
             return
@@ -121,6 +85,7 @@ def calculate_signals(symbol):
         adx_now = adx_val.iloc[-1]
         rsi_now = rsi_val.iloc[-1]
 
+        # All 4 condition check together
         buy_condition = (
             close_now > ema_now
             and adx_now > adx_threshold
@@ -135,6 +100,7 @@ def calculate_signals(symbol):
             and close_now < level_80
         )
 
+        # Alert only when all four are true (and only once)
         signal_file = "signal_log.txt"
         last_signal = ""
         if os.path.exists(signal_file):
@@ -183,3 +149,4 @@ while True:
         time.sleep(5)
     print("\n🔄 Full scan complete — waiting 2 minutes...\n")
     time.sleep(120)
+yeh hamara python script hame isme hame fixed karke dijiye
