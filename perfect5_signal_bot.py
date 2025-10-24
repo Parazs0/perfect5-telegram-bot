@@ -72,8 +72,8 @@ def is_market_open(symbol: str) -> bool:
     market, tz, start, end = get_market_info(symbol)
     now = datetime.now(tz)
     
-    # Monday–Friday only
-    if now.weekday() >= 5:
+    # Monday–Sunday only
+    if now.weekday() >= 7:
         return False
 
     # 24x7 markets
