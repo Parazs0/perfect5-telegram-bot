@@ -149,4 +149,3 @@ while True:
         time.sleep(5)
     print("\n🔄 Full scan complete — waiting 2 minutes...\n")
     time.sleep(120)
-yeh hamara python script hame isme hame fixed karke dijiye
