@@ -129,7 +129,7 @@ def calculate_signals(symbol):
 # 🔹 Keep Alive (for Render)
 # ===========================
 def keep_alive():
-    PORT = 10000
+    PORT = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", PORT), handler) as httpd:
         print(f"✅ Keep-alive server running on port {PORT}")

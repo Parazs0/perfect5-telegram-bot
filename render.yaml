@@ -1,8 +1,9 @@
 services:
-  - type: worker
+  - type: web
     name: perfect5-signal-bot
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python perfect5_signal_bot.py"
+    pythonVersion: 3.10.14
     autoDeploy: true
