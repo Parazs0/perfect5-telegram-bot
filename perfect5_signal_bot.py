@@ -52,14 +52,67 @@ def send_telegram_message(text):
         print(f"⚠️ Telegram error: {e}")
 
 # ===========================
+# 🔹 Exchange & Market Hours
+# ===========================
+MARKET_HOURS = {
+    "NSE": ("09:15", "15:30"),
+    "BSE": ("09:15", "15:30"),
+    "MCX": ("09:00", "24:00"),
+    "INDEX": ("00:00", "23:59"),
+    "CAPITALCOM": ("00:00", "23:59"),
+    "TVC": ("00:00", "23:59"),
+    "IG": ("00:00", "23:59"),
+    "OANDA": ("00:00", "23:59"),
+    "SKILLING": ("00:00", "23:59"),
+    "SPREADEX": ("00:00", "23:59"),
+    "SZSE": ("00:00", "23:59"),
+    "VANTAGE": ("00:00", "23:59")
+}
+
+def detect_exchange(symbol):
+    """Auto detect exchange name based on symbol or CSV column"""
+    if "EXCHANGE" in symbols_df.columns:
+        return symbols_df.loc[symbols_df["SYMBOL"] == symbol, "EXCHANGE"].values[0]
+
+    # Guess based on name pattern
+    if symbol.endswith(".NS"):
+        return "NSE"
+    elif symbol.endswith(".BO"):
+        return "BSE"
+    elif "CRUDE" in symbol or "GOLD" in symbol or "SILVER" in symbol:
+        return "MCX"
+    elif any(x in symbol for x in ["USD", "OIL", "EUR", "BTC", "INDEX"]):
+        return "INDEX"
+    else:
+        return "NSE"  # Default fallback
+
+def is_market_open(exchange):
+    """Check if current time is within market hours"""
+    now = datetime.now().time()
+    day = datetime.now().strftime("%A")
+
+    # Skip weekends
+    if day in ["Saturday", "Sunday"]:
+        return False
+
+    start, end = MARKET_HOURS.get(exchange, ("00:00", "23:59"))
+    return start <= now.strftime("%H:%M") <= end
+
+# ===========================
 # 🔹 Signal Logic
 # ===========================
 def calculate_signals(symbol):
     try:
-        df = tv.get_hist(symbol=symbol, exchange=None, interval=Interval.in_30_minute, n_bars=100)
+        exchange = detect_exchange(symbol)
 
+        # Market hours check
+        if not is_market_open(exchange):
+            print(f"⏸️ Market closed for {symbol} ({exchange})")
+            return
+
+        df = tv.get_hist(symbol=symbol, exchange=exchange, interval=Interval.in_30_minute, n_bars=100)
         if df is None or df.empty:
-            print(f"⚠️ No data for {symbol}")
+            print(f"⚠️ No data for {symbol} ({exchange})")
             return
 
         df = df.reset_index()
@@ -85,22 +138,11 @@ def calculate_signals(symbol):
         adx_now = adx_val.iloc[-1]
         rsi_now = rsi_val.iloc[-1]
 
-        # All 4 condition check together
-        buy_condition = (
-            close_now > ema_now
-            and adx_now > adx_threshold
-            and rsi_now > 50
-            and close_now > level_20
-        )
+        # Conditions
+        buy_condition = close_now > ema_now and adx_now > adx_threshold and rsi_now > 50 and close_now > level_20
+        sell_condition = close_now < ema_now and adx_now > adx_threshold and rsi_now < 50 and close_now < level_80
 
-        sell_condition = (
-            close_now < ema_now
-            and adx_now > adx_threshold
-            and rsi_now < 50
-            and close_now < level_80
-        )
-
-        # Alert only when all four are true (and only once)
+        # Signal file tracking
         signal_file = "signal_log.txt"
         last_signal = ""
         if os.path.exists(signal_file):
@@ -108,11 +150,10 @@ def calculate_signals(symbol):
                 last_signal = f.read().strip()
 
         new_signal = ""
-
         if buy_condition:
-            new_signal = f"🟢 BUY SIGNAL — {symbol}\n💰 {round(close_now,2)} | RSI {round(rsi_now,1)} | ADX {round(adx_now,1)}"
+            new_signal = f"🟢 BUY SIGNAL — {symbol} ({exchange})\n💰 {round(close_now,2)} | RSI {round(rsi_now,1)} | ADX {round(adx_now,1)}"
         elif sell_condition:
-            new_signal = f"🔴 SELL SIGNAL — {symbol}\n💰 {round(close_now,2)} | RSI {round(rsi_now,1)} | ADX {round(adx_now,1)}"
+            new_signal = f"🔴 SELL SIGNAL — {symbol} ({exchange})\n💰 {round(close_now,2)} | RSI {round(rsi_now,1)} | ADX {round(adx_now,1)}"
 
         if new_signal and new_signal != last_signal:
             print(new_signal)
@@ -120,7 +161,7 @@ def calculate_signals(symbol):
             with open(signal_file, "w") as f:
                 f.write(new_signal)
         else:
-            print(f"✅ {symbol} — No signal")
+            print(f"✅ {symbol} ({exchange}) — No signal")
 
     except Exception as e:
         print(f"⚠️ Error in {symbol}: {e}")
